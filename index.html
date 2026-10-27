@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Торты на заказ</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="cakes.js"></script>
+  <style>
+    /* Цвета берутся из темы Telegram; в обычном браузере — запасные */
+    :root {
+      --bg: var(--tg-theme-bg-color, #fff8f3);
+      --text: var(--tg-theme-text-color, #3b2a20);
+      --hint: var(--tg-theme-hint-color, #8a776b);
+      --card: var(--tg-theme-secondary-bg-color, #ffffff);
+      --accent: var(--tg-theme-button-color, #c8607a);
+      --accent-text: var(--tg-theme-button-text-color, #ffffff);
+      --danger: #d33;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      /* Ширина как у окна Telegram на телефоне — и на компьютере тоже */
+      max-width: 440px; margin: 0 auto; padding: 12px;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 15px; line-height: 1.4;
+    }
+    h1 { font-size: 20px; margin: 4px 0 12px; text-align: center; }
+    .card {
+      background: var(--card); border-radius: 14px; overflow: hidden;
+      margin-bottom: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08);
+    }
+    /* Фото показывается целиком, без обрезки, но не выше 200px */
+    .card .photo {
+      height: 200px; background: #f4ebe4;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .card img { max-width: 100%; max-height: 100%; display: block; }
+    .card-body { padding: 10px 14px 14px; }
+    .card h2 { font-size: 17px; margin: 0 0 2px; }
+    .price { font-size: 17px; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+    .desc { color: var(--hint); font-size: 14px; margin: 0 0 12px; }
+    button {
+      width: 100%; min-height: 50px; padding: 14px; border: 0; border-radius: 12px;
+      background: var(--accent); color: var(--accent-text);
+      font-size: 17px; font-weight: 600; cursor: pointer;
+    }
+    button:active { opacity: .85; }
+    button.secondary { background: transparent; color: var(--accent); margin-top: 8px; }
+    .hidden { display: none; }
+    label { display: block; font-weight: 600; margin: 14px 0 4px; }
+    input, textarea {
+      width: 100%; padding: 10px 12px; font-size: 16px;
+      border: 1px solid var(--hint); border-radius: 10px;
+      background: var(--card); color: var(--text); font-family: inherit;
+    }
+    .error { color: var(--danger); font-size: 14px; margin-top: 4px; min-height: 1em; }
+    .chosen { background: var(--card); border-radius: 12px; padding: 12px 16px; }
+    .done { text-align: center; padding: 40px 16px; }
+    .done .big { font-size: 48px; }
+  </style>
+</head>
+<body>
+
+  <!-- Экран 1: витрина -->
+  <div id="shop">
+    <h1>Торты на заказ 🎂</h1>
+    <div id="cakes"></div>
+  </div>
+
+  <!-- Экран 2: форма заказа -->
+  <div id="order" class="hidden">
+    <h1>Оформление заказа</h1>
+    <div class="chosen"><b id="o-cake"></b><br><span class="price" id="o-price"></span></div>
+
+    <label for="f-name">Ваше имя</label>
+    <input id="f-name" autocomplete="name">
+    <div class="error" id="e-name"></div>
+
+    <label for="f-phone">Телефон</label>
+    <input id="f-phone" type="tel" placeholder="+7 900 123-45-67" autocomplete="tel">
+    <div class="error" id="e-phone"></div>
+
+    <label for="f-date">К какой дате</label>
+    <input id="f-date" type="date">
+    <div class="error" id="e-date"></div>
+
+    <label for="f-comment">Пожелания, надпись на торте</label>
+    <textarea id="f-comment" rows="3" placeholder="Необязательно"></textarea>
+
+    <div style="margin-top:20px">
+      <button id="send-btn">Отправить заказ</button>
+      <button class="secondary" id="back-btn">← Назад к тортам</button>
+    </div>
+  </div>
+
+  <!-- Экран 3: спасибо -->
+  <div id="done" class="hidden done">
+    <div class="big">🎉</div>
+    <h1>Спасибо за заказ!</h1>
+    <p>Я свяжусь с вами, чтобы всё уточнить.</p>
+    <button class="secondary" id="again-btn">← Вернуться к тортам</button>
+  </div>
+
+<script>
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const inTelegram = tg && tg.platform && tg.platform !== "unknown";
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const $ = (id) => document.getElementById(id);
+  let chosenCake = null;
+  let sending = false;
+
+  function formatPrice(p) { return p.toLocaleString("ru-RU") + " ₽"; }
+
+  function show(screen) {
+    ["shop", "order", "done"].forEach((s) => $(s).classList.toggle("hidden", s !== screen));
+    window.scrollTo(0, 0);
+    if (!inTelegram) return;
+    // Внутри Telegram — его собственные кнопки «Назад» и «Отправить»
+    if (screen === "order") {
+      tg.BackButton.show();
+      tg.MainButton.setText("Отправить заказ").show();
+      $("send-btn").classList.add("hidden");
+      $("back-btn").classList.add("hidden");
+    } else {
+      tg.BackButton.hide();
+      tg.MainButton.hide();
+    }
+  }
+
+  // --- Витрина ---
+  CAKES.forEach((cake, i) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="photo"><img src="${cake.photo}" alt="" loading="lazy"></div>
+      <div class="card-body">
+        <h2></h2>
+        <div class="price">${formatPrice(cake.price)}</div>
+        <p class="desc"></p>
+        <button>Заказать</button>
+      </div>`;
+    card.querySelector("h2").textContent = cake.name;
+    card.querySelector(".desc").textContent = cake.description;
+    card.querySelector("button").onclick = () => openOrder(i);
+    $("cakes").appendChild(card);
+  });
+
+  // --- Форма ---
+  function dateToInput(d) {
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${m}-${day}`;
+  }
+  function minDate() {
+    const d = new Date();
+    d.setDate(d.getDate() + MIN_DAYS_AHEAD);
+    return dateToInput(d);
+  }
+
+  function openOrder(i) {
+    chosenCake = CAKES[i];
+    $("o-cake").textContent = chosenCake.name;
+    $("o-price").textContent = formatPrice(chosenCake.price);
+    $("f-date").min = minDate();
+    const user = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+    if (user && !$("f-name").value) {
+      $("f-name").value = [user.first_name, user.last_name].filter(Boolean).join(" ");
+    }
+    ["e-name", "e-phone", "e-date"].forEach((id) => ($(id).textContent = ""));
+    show("order");
+  }
+
+  function validate() {
+    let ok = true;
+    const name = $("f-name").value.trim();
+    const digits = $("f-phone").value.replace(/\D/g, "");
+    const date = $("f-date").value;
+
+    $("e-name").textContent = name ? "" : "Напишите, как к вам обращаться";
+    if (!name) ok = false;
+
+    const phoneOk = digits.length >= 10 && digits.length <= 15;
+    $("e-phone").textContent = phoneOk ? "" : "Проверьте номер телефона";
+    if (!phoneOk) ok = false;
+
+    let dateMsg = "";
+    if (!date) dateMsg = "Выберите дату";
+    else if (date < minDate()) dateMsg = `Заказ принимается минимум за ${MIN_DAYS_AHEAD} дн.`;
+    $("e-date").textContent = dateMsg;
+    if (dateMsg) ok = false;
+
+    return ok;
+  }
+
+  async function sendOrder() {
+    if (sending || !validate()) return;
+    const user = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+    const order = {
+      cake: chosenCake.name,
+      price: chosenCake.price,
+      name: $("f-name").value.trim(),
+      phone: $("f-phone").value.trim(),
+      date: $("f-date").value,
+      comment: $("f-comment").value.trim(),
+      username: user && user.username ? "@" + user.username : "",
+    };
+
+    // Почтальон ещё не подключён — просто показываем, что ушло бы
+    if (!ORDER_URL) {
+      alert("Пробный режим. Заказ выглядел бы так:\n\n" +
+        `Торт: ${order.cake} (${formatPrice(order.price)})\nИмя: ${order.name}\n` +
+        `Телефон: ${order.phone}\nДата: ${order.date}\nПожелания: ${order.comment || "—"}`);
+      show("done");
+      return;
+    }
+
+    sending = true;
+    if (inTelegram) tg.MainButton.showProgress();
+    $("send-btn").disabled = true;
+    try {
+      const res = await fetch(ORDER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(order),
+      });
+      const answer = await res.json();
+      if (!answer.ok) throw new Error(answer.error || "fail");
+      $("f-comment").value = "";
+      show("done");
+    } catch (e) {
+      alert("Не получилось отправить заказ. Проверьте интернет и попробуйте ещё раз.");
+    } finally {
+      sending = false;
+      if (inTelegram) tg.MainButton.hideProgress();
+      $("send-btn").disabled = false;
+    }
+  }
+
+  $("send-btn").onclick = sendOrder;
+  $("back-btn").onclick = () => show("shop");
+  $("again-btn").onclick = () => show("shop");
+  if (inTelegram) {
+    tg.MainButton.onClick(sendOrder);
+    tg.BackButton.onClick(() => show("shop"));
+  }
+</script>
+</body>
+</html>
